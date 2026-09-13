@@ -511,4 +511,173 @@ export default function AdvisorDashboard() {
 
         <section className="rounded-xl bg-slate-900 border border-slate-800 p-6">
           <h2 className="text-lg font-semibold mb-1">{t.networkTitle}</h2>
-          <p className="text-sm text-slate-400 
+          <p className="text-sm text-slate-400 mb-5">{t.networkBody}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <NetworkTier label={t.gen1Label} data={genStats.gen1} t={t} opacity={1} />
+            <NetworkTier label={t.gen2Label} data={genStats.gen2} t={t} opacity={0.7} />
+            <NetworkTier label={t.gen3Label} data={genStats.gen3} t={t} opacity={0.45} />
+          </div>
+
+          <div className="border-t border-slate-800 pt-5 mb-5">
+            <div className="text-sm font-medium text-slate-300">{t.browseNetworkTitle}</div>
+            <div className="text-xs text-slate-500 mb-2">{t.browseNetworkHint}</div>
+            <div>
+              {referralTree.map((person) => (
+                <PersonNode key={person.id} person={person} t={t} depth={0} />
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-slate-800 pt-5 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="text-sm text-slate-400">{t.withdrawTitle}</div>
+              <div className="text-xl font-semibold text-amber-400">{t.withdrawAvailable(available)}</div>
+            </div>
+            {!showWithdrawForm && (
+              <button
+                type="button"
+                onClick={() => setShowWithdrawForm(true)}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-semibold rounded-lg px-4 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-slate-900"
+              >
+                {t.withdrawButton}
+              </button>
+            )}
+          </div>
+
+          {showWithdrawForm && (
+            <form onSubmit={handleWithdrawSubmit} className="mt-4 flex flex-wrap items-start gap-3">
+              <div className="flex-1">
+                <input
+                  type="number"
+                  min="1"
+                  max={available}
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  placeholder={t.withdrawPlaceholder}
+                  className={inputClass}
+                  autoFocus
+                />
+                {withdrawError && <p className="mt-1.5 text-xs text-rose-400">{withdrawError}</p>}
+              </div>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
+              >
+                {t.withdrawSubmit}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWithdrawForm(false);
+                  setWithdrawError('');
+                }}
+                className="text-slate-400 hover:text-slate-200 rounded-lg px-4 py-2.5 text-sm transition-colors"
+              >
+                {t.withdrawCancel}
+              </button>
+            </form>
+          )}
+
+          {requests.length > 0 && (
+            <div className="mt-6">
+              <div className="text-sm font-medium text-slate-300 mb-2">{t.recentRequests}</div>
+              <div className="space-y-2">
+                {requests.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between text-sm py-2 border-b border-slate-800 last:border-0">
+                    <span className="text-slate-300">
+                      {r.points} {t.ptsUnit} — {formatDate(r.requestedAt, locale)}
+                    </span>
+                    <RequestStatusBadge status={r.status} t={t} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section>
+          <h2 className="text-lg font-semibold mb-4">{t.myInvestorsTitle}</h2>
+          {assignedInvestors.length === 0 ? (
+            <p className="text-slate-400 text-sm">{t.myInvestorsEmpty}</p>
+          ) : (
+            <div className="space-y-3">
+              {assignedInvestors.map((inv) => {
+                const isOpen = selectedInvestorId === inv.id;
+                const chatThread = investorChats[inv.id] || [];
+                return (
+                  <div key={inv.id} className="rounded-xl bg-slate-900 border border-slate-800 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => handleSelectInvestor(inv.id)}
+                      className="w-full flex flex-wrap items-center justify-between gap-3 p-4 hover:bg-slate-800/50 transition-colors"
+                    >
+                      <div>
+                        <div className="font-semibold text-slate-50">{inv.name}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">
+                          {t.investedLabel}: {formatCurrency(inv.totalInvested)}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center text-xs font-medium px-2.5 py-1 rounded-full bg-emerald-400/10 text-emerald-400">
+                          {inv.status === 'approved' ? t.statusApproved : t.statusPending}
+                        </span>
+                        <span
+                          className={`inline-flex items-center text-xs font-medium px-2.5 py-1 rounded-full ${
+                            inv.membershipActive ? 'bg-amber-400/10 text-amber-400' : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {inv.membershipActive ? t.membershipActive : t.membershipInactive}
+                        </span>
+                        <ChevronDown
+                          className={`w-4 h-4 text-slate-500 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`}
+                        />
+                      </div>
+                    </button>
+
+                    {isOpen && (
+                      <div className="border-t border-slate-800 p-4 space-y-5">
+                        <div>
+                          <div className="text-sm font-medium text-slate-300 mb-2">{t.chatWithInvestor(inv.name)}</div>
+                          <div className="space-y-2.5 max-h-60 overflow-y-auto mb-3">
+                            {chatThread.length === 0 && <p className="text-slate-500 text-xs">—</p>}
+                            {chatThread.map((m) => (
+                              <div key={m.id} className={`flex ${m.from === 'advisor' ? 'justify-end' : 'justify-start'}`}>
+                                <div
+                                  className={`max-w-xs rounded-lg px-3 py-2 text-sm ${
+                                    m.from === 'advisor' ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-100'
+                                  }`}
+                                >
+                                  {m.body}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <form onSubmit={(e) => handleSendInvestorMessage(e, inv.id)} className="flex gap-2">
+                            <input
+                              value={investorChatInput}
+                              onChange={(e) => setInvestorChatInput(e.target.value)}
+                              placeholder={t.chatPlaceholder}
+                              className={inputClass}
+                            />
+                            <button
+                              type="submit"
+                              aria-label={t.chatSend}
+                              className="flex-shrink-0 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg px-3 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400"
+                            >
+                              <Send className="w-4 h-4" />
+                            </button>
+                          </form>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
