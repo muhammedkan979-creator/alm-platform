@@ -508,4 +508,132 @@ export default function InvestorDashboard() {
           <div className="flex items-center gap-3 mb-4">
             <div className="w-9 h-9 rounded-full bg-slate-800 flex items-center justify-center text-sm font-medium text-slate-300 flex-shrink-0">
               {advisor.fullName.charAt(0)}
-            </d
+            </div>
+            <div>
+              <div className="text-sm font-medium text-slate-100">{advisor.fullName}</div>
+              <div className="text-xs text-slate-500">{t.advisorRoleTitle}</div>
+            </div>
+          </div>
+
+          <div className="space-y-2.5 max-h-80 overflow-y-auto mb-4">
+            {messages.map((m) => (
+              <div key={m.id} className={`flex ${m.from === 'investor' ? 'justify-end' : 'justify-start'}`}>
+                <div
+                  className={`max-w-xs rounded-lg px-3 py-2 text-sm ${
+                    m.from === 'investor' ? 'bg-amber-400 text-slate-950' : 'bg-slate-800 text-slate-100'
+                  }`}
+                >
+                  {m.body}
+                </div>
+              </div>
+            ))}
+            <div ref={chatEndRef} />
+          </div>
+
+          <form onSubmit={handleSendMessage} className="flex gap-2">
+            <input
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder={t.chatPlaceholder}
+              className={inputClass}
+            />
+            <button
+              type="submit"
+              aria-label={t.chatSend}
+              className="flex-shrink-0 bg-amber-400 hover:bg-amber-300 text-slate-950 rounded-lg px-3 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400"
+            >
+              <Send className="w-4 h-4" />
+            </button>
+          </form>
+        </section>
+
+        <section className="rounded-xl bg-slate-900 border border-slate-800 p-6">
+          <h2 className="text-lg font-semibold mb-1">{t.networkTitle}</h2>
+          <p className="text-sm text-slate-400 mb-5">{t.networkBody}</p>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+            <NetworkTier label={t.gen1Label} data={genStats.gen1} t={t} opacity={1} />
+            <NetworkTier label={t.gen2Label} data={genStats.gen2} t={t} opacity={0.7} />
+            <NetworkTier label={t.gen3Label} data={genStats.gen3} t={t} opacity={0.45} />
+          </div>
+
+          <div className="border-t border-slate-800 pt-5 mb-5">
+            <div className="text-sm font-medium text-slate-300">{t.browseNetworkTitle}</div>
+            <div className="text-xs text-slate-500 mb-2">{t.browseNetworkHint}</div>
+            <div>
+              {referralTree.map((person) => (
+                <PersonNode key={person.id} person={person} t={t} depth={0} />
+              ))}
+            </div>
+          </div>
+
+          <div className="border-t border-slate-800 pt-5 flex flex-wrap items-center justify-between gap-4">
+            <div>
+              <div className="text-sm text-slate-400">{t.withdrawTitle}</div>
+              <div className="text-xl font-semibold text-amber-400">{t.withdrawAvailable(available)}</div>
+            </div>
+            {!showWithdrawForm && (
+              <button
+                type="button"
+                onClick={() => setShowWithdrawForm(true)}
+                className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-semibold rounded-lg px-4 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400 focus:ring-offset-2 focus:ring-offset-slate-900"
+              >
+                {t.withdrawButton}
+              </button>
+            )}
+          </div>
+
+          {showWithdrawForm && (
+            <form onSubmit={handleWithdrawSubmit} className="mt-4 flex flex-wrap items-start gap-3">
+              <div className="flex-1">
+                <input
+                  type="number"
+                  min="1"
+                  max={available}
+                  value={withdrawAmount}
+                  onChange={(e) => setWithdrawAmount(e.target.value)}
+                  placeholder={t.withdrawPlaceholder}
+                  className={inputClass}
+                  autoFocus
+                />
+                {withdrawError && <p className="mt-1.5 text-xs text-rose-400">{withdrawError}</p>}
+              </div>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
+              >
+                {t.withdrawSubmit}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowWithdrawForm(false);
+                  setWithdrawError('');
+                }}
+                className="text-slate-400 hover:text-slate-200 rounded-lg px-4 py-2.5 text-sm transition-colors"
+              >
+                {t.withdrawCancel}
+              </button>
+            </form>
+          )}
+
+          {requests.length > 0 && (
+            <div className="mt-6">
+              <div className="text-sm font-medium text-slate-300 mb-2">{t.recentRequests}</div>
+              <div className="space-y-2">
+                {requests.map((r) => (
+                  <div key={r.id} className="flex items-center justify-between text-sm py-2 border-b border-slate-800 last:border-0">
+                    <span className="text-slate-300">
+                      {r.points} {t.ptsUnit} — {formatDate(r.requestedAt, locale)}
+                    </span>
+                    <RequestStatusBadge status={r.status} t={t} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      </main>
+    </div>
+  );
+}
