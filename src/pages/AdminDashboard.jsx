@@ -1,15 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Globe, Check, X, Users, TrendingUp, Clock, Wallet, Gift, Power, LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 /*
-  Prototype admin dashboard for the ALM Platform.
-  Data below is mocked so the screen is fully interactive as a preview —
-  swap it out for real Supabase calls once this lives in your project:
-  approve_account / reject_account, assign_advisor, decide_withdrawal_request,
-  record_payment, and (for the rewards section) direct insert/update on the
-  rewards table — admin-only per the "admin manage rewards" RLS policy, no
-  RPC wrapper needed there.
+  Admin dashboard for the ALM Platform — wired to real Supabase data.
+  All stats, lists, and actions read from and write to the actual
+  database (profiles, investments, payments, point_withdrawal_requests,
+  rewards) via the RPCs defined in the schema: approve_account,
+  reject_account, assign_advisor, record_payment, decide_withdrawal_request.
 */
 
 const copy = {
@@ -17,6 +16,7 @@ const copy = {
     brand: 'ALM Platform',
     switchLanguage: 'العربية',
     welcomeAdmin: (name) => `Welcome back, ${name}`,
+    loading: 'Loading…',
     statTotalInvestors: 'Total investors',
     statTotalInvested: 'Total invested',
     statPendingApprovals: 'Pending approvals',
@@ -63,6 +63,7 @@ const copy = {
     brand: 'منصّة ALM',
     switchLanguage: 'English',
     welcomeAdmin: (name) => `أهلين، ${name}`,
+    loading: 'عم يحمّل…',
     statTotalInvestors: 'إجمالي المستثمرين',
     statTotalInvested: 'إجمالي الاستثمار',
     statPendingApprovals: 'بانتظار الموافقة',
@@ -107,44 +108,8 @@ const copy = {
   },
 };
 
-const admin = { fullName: 'Omar Kanaan' };
-
-const stats = {
-  totalInvestors: 128,
-  totalInvested: 640000,
-  pendingApprovals: 3,
-  pendingWithdrawals: 2,
-};
-
-const advisorsList = ['Nadeen Salameh', 'Karim Bishara', 'Huda Masri'];
-const investorsList = ['Layla Haddad', 'Yousef Nassar', 'Hala Barakat', 'Mahmoud Rimawi', 'Omar Freij'];
-
-const initialAccounts = [
-  { id: 1, name: 'Marwan Sabbagh', referralCode: 'AB12CD34EF', referredBy: 'Yousef Nassar', requestedAt: '2026-09-08' },
-  { id: 2, name: 'Dina Qasem', referralCode: 'QW99ER77TY', referredBy: 'Hala Barakat', requestedAt: '2026-09-09' },
-  { id: 3, name: 'Firas Allan', referralCode: 'ZX44VB88NM', referredBy: 'Mahmoud Rimawi', requestedAt: '2026-09-10' },
-];
-
-const initialWithdrawals = [
-  { id: 1, investorName: 'Layla Haddad', points: 50, requestedAt: '2026-08-20' },
-  { id: 2, investorName: 'Omar Freij', points: 120, requestedAt: '2026-09-05' },
-];
-
-const initialPayments = [
-  { id: 1, investorName: 'Layla Haddad', type: 'investment', amount: 5000, note: '', recordedAt: '2025-03-01' },
-  { id: 2, investorName: 'Yousef Nassar', type: 'membership', amount: 200, note: '', recordedAt: '2026-08-12' },
-  { id: 3, investorName: 'Hala Barakat', type: 'investment', amount: 2500, note: 'Wire transfer #4471', recordedAt: '2026-09-01' },
-];
-
-const initialRewardsList = [
-  { id: 1, name: { en: 'Amazon gift card — $50', ar: 'بطاقة أمازون هدية — 50$' }, pointsCost: 200, stock: 12, active: true },
-  { id: 2, name: { en: 'Free financial consultation', ar: 'استشارة مالية مجانية' }, pointsCost: 100, stock: null, active: true },
-  { id: 3, name: { en: 'Premium membership upgrade', ar: 'ترقية عضوية بريميوم' }, pointsCost: 500, stock: 0, active: true },
-  { id: 4, name: { en: 'Branded gift set', ar: 'طقم هدايا مميز' }, pointsCost: 150, stock: 5, active: false },
-];
-
 function translateReward(value, locale) {
-  return value[locale] || value.en;
+  return (value && value[locale]) || (value && value.en) || '';
 }
 
 function formatCurrency(n) {
@@ -197,11 +162,20 @@ const rejectBtnClass =
   'inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-rose-400/10 text-rose-400 hover:bg-rose-400/20 disabled:opacity-50 transition-colors';
 
 export default function AdminDashboard() {
-  const { signOut } = useAuth();
+  const { signOut, profile } = useAuth();
   const [locale, setLocale] = useState('en');
-  const [accounts, setAccounts] = useState(initialAccounts);
-  const [withdrawals, setWithdrawals] = useState(initialWithdrawals);
-  const [payments, setPayments] = useState(initialPayments);
+
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const [stats, setStats] = useState({ totalInvestors: 0, totalInvested: 0, pendingApprovals: 0, pendingWithdrawals: 0 });
+  const [accounts, setAccounts] = useState([]);
+  const [withdrawals, setWithdrawals] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [rewardsList, setRewardsList] = useState([]);
+  const [advisorsList, setAdvisorsList] = useState([]);
+  const [investorsList, setInvestorsList] = useState([]);
+
   const [advisorSelections, setAdvisorSelections] = useState({});
   const [processingAccountId, setProcessingAccountId] = useState(null);
   const [processingWithdrawalId, setProcessingWithdrawalId] = useState(null);
@@ -214,7 +188,6 @@ export default function AdminDashboard() {
   const [submittingPayment, setSubmittingPayment] = useState(false);
   const [paymentSuccess, setPaymentSuccess] = useState('');
 
-  const [rewardsList, setRewardsList] = useState(initialRewardsList);
   const [newRewardNameEn, setNewRewardNameEn] = useState('');
   const [newRewardNameAr, setNewRewardNameAr] = useState('');
   const [newRewardCost, setNewRewardCost] = useState('');
@@ -224,23 +197,161 @@ export default function AdminDashboard() {
   const t = copy[locale];
   const dir = locale === 'ar' ? 'rtl' : 'ltr';
 
-  function handleAccountDecision(id) {
-    setProcessingAccountId(id);
-    setTimeout(() => {
-      setAccounts((prev) => prev.filter((a) => a.id !== id));
+  async function loadData() {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const [investorsCountRes, investmentsRes, pendingAccountsRes, pendingWithdrawalsRes, paymentsRes, rewardsRes, advisorsRes, approvedInvestorsRes] =
+        await Promise.all([
+          supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'investor'),
+          supabase.from('investments').select('amount'),
+          supabase.from('profiles').select('id, full_name, referral_code, referred_by, created_at').eq('status', 'pending'),
+          supabase.from('point_withdrawal_requests').select('id, profile_id, points, requested_at').eq('status', 'pending'),
+          supabase.from('payments').select('id, profile_id, type, amount, note, created_at').order('created_at', { ascending: false }).limit(20),
+          supabase.from('rewards').select('*').order('created_at', { ascending: false }),
+          supabase.from('profiles').select('id, full_name').eq('role', 'advisor').eq('status', 'approved'),
+          supabase.from('profiles').select('id, full_name').eq('role', 'investor').eq('status', 'approved'),
+        ]);
+
+      const results = [
+        investorsCountRes,
+        investmentsRes,
+        pendingAccountsRes,
+        pendingWithdrawalsRes,
+        paymentsRes,
+        rewardsRes,
+        advisorsRes,
+        approvedInvestorsRes,
+      ];
+      const firstError = results.find((r) => r.error);
+      if (firstError) throw firstError.error;
+
+      const totalInvested = (investmentsRes.data || []).reduce((sum, inv) => sum + Number(inv.amount), 0);
+
+      const referrerIds = [...new Set((pendingAccountsRes.data || []).map((a) => a.referred_by).filter(Boolean))];
+      let referrerMap = {};
+      if (referrerIds.length > 0) {
+        const { data: referrers } = await supabase.from('profiles').select('id, full_name').in('id', referrerIds);
+        referrerMap = Object.fromEntries((referrers || []).map((r) => [r.id, r.full_name]));
+      }
+
+      const withdrawalProfileIds = [...new Set((pendingWithdrawalsRes.data || []).map((w) => w.profile_id))];
+      let withdrawalNameMap = {};
+      if (withdrawalProfileIds.length > 0) {
+        const { data: wProfiles } = await supabase.from('profiles').select('id, full_name').in('id', withdrawalProfileIds);
+        withdrawalNameMap = Object.fromEntries((wProfiles || []).map((p) => [p.id, p.full_name]));
+      }
+
+      const paymentProfileIds = [...new Set((paymentsRes.data || []).map((p) => p.profile_id))];
+      let paymentNameMap = {};
+      if (paymentProfileIds.length > 0) {
+        const { data: pProfiles } = await supabase.from('profiles').select('id, full_name').in('id', paymentProfileIds);
+        paymentNameMap = Object.fromEntries((pProfiles || []).map((p) => [p.id, p.full_name]));
+      }
+
+      setStats({
+        totalInvestors: investorsCountRes.count || 0,
+        totalInvested,
+        pendingApprovals: (pendingAccountsRes.data || []).length,
+        pendingWithdrawals: (pendingWithdrawalsRes.data || []).length,
+      });
+
+      setAccounts(
+        (pendingAccountsRes.data || []).map((a) => ({
+          id: a.id,
+          name: a.full_name,
+          referralCode: a.referral_code,
+          referredBy: a.referred_by ? referrerMap[a.referred_by] || '—' : '—',
+          requestedAt: a.created_at,
+        }))
+      );
+
+      setWithdrawals(
+        (pendingWithdrawalsRes.data || []).map((w) => ({
+          id: w.id,
+          investorName: withdrawalNameMap[w.profile_id] || '—',
+          points: w.points,
+          requestedAt: w.requested_at,
+        }))
+      );
+
+      setPayments(
+        (paymentsRes.data || []).map((p) => ({
+          id: p.id,
+          investorName: paymentNameMap[p.profile_id] || '—',
+          type: p.type,
+          amount: Number(p.amount),
+          note: p.note || '',
+          recordedAt: p.created_at,
+        }))
+      );
+
+      setRewardsList(rewardsRes.data || []);
+      setAdvisorsList(advisorsRes.data || []);
+      setInvestorsList(approvedInvestorsRes.data || []);
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleApproveAccount(account) {
+    setProcessingAccountId(account.id);
+    setErrorMsg('');
+    try {
+      const advisorId = advisorSelections[account.id];
+      if (advisorId) {
+        const { error: assignError } = await supabase.rpc('assign_advisor', {
+          p_investor_id: account.id,
+          p_advisor_id: advisorId,
+        });
+        if (assignError) throw assignError;
+      }
+      const { error } = await supabase.rpc('approve_account', { p_profile_id: account.id });
+      if (error) throw error;
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
       setProcessingAccountId(null);
-    }, 600);
+    }
   }
 
-  function handleWithdrawalDecision(id) {
-    setProcessingWithdrawalId(id);
-    setTimeout(() => {
-      setWithdrawals((prev) => prev.filter((w) => w.id !== id));
+  async function handleRejectAccount(account) {
+    setProcessingAccountId(account.id);
+    setErrorMsg('');
+    try {
+      const { error } = await supabase.rpc('reject_account', { p_profile_id: account.id });
+      if (error) throw error;
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setProcessingAccountId(null);
+    }
+  }
+
+  async function handleWithdrawalDecision(w, approve) {
+    setProcessingWithdrawalId(w.id);
+    setErrorMsg('');
+    try {
+      const { error } = await supabase.rpc('decide_withdrawal_request', { p_request_id: w.id, p_approve: approve });
+      if (error) throw error;
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
       setProcessingWithdrawalId(null);
-    }, 600);
+    }
   }
 
-  function handleRecordPayment(e) {
+  async function handleRecordPayment(e) {
     e.preventDefault();
     const next = {};
     if (!selectedInvestor) next.investor = t.errorRequired;
@@ -250,32 +361,40 @@ export default function AdminDashboard() {
 
     setSubmittingPayment(true);
     setPaymentSuccess('');
-    setTimeout(() => {
-      setPayments((prev) => [
-        {
-          id: Date.now(),
-          investorName: selectedInvestor,
-          type: paymentType,
-          amount: Number(amount),
-          note,
-          recordedAt: new Date().toISOString().slice(0, 10),
-        },
-        ...prev,
-      ]);
-      setSubmittingPayment(false);
-      setPaymentSuccess(t.recordSuccess(selectedInvestor));
+    setErrorMsg('');
+    try {
+      const { error } = await supabase.rpc('record_payment', {
+        p_profile_id: selectedInvestor,
+        p_type: paymentType,
+        p_amount: Number(amount),
+        p_note: note.trim() || null,
+      });
+      if (error) throw error;
+      const investorName = investorsList.find((i) => i.id === selectedInvestor)?.full_name || '';
+      setPaymentSuccess(t.recordSuccess(investorName));
       setSelectedInvestor('');
       setPaymentType('membership');
       setAmount('');
       setNote('');
-    }, 700);
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setSubmittingPayment(false);
+    }
   }
 
-  function handleToggleRewardActive(id) {
-    setRewardsList((prev) => prev.map((r) => (r.id === id ? { ...r, active: !r.active } : r)));
+  async function handleToggleRewardActive(reward) {
+    setErrorMsg('');
+    const { error } = await supabase.from('rewards').update({ active: !reward.active }).eq('id', reward.id);
+    if (error) {
+      setErrorMsg(error.message);
+      return;
+    }
+    await loadData();
   }
 
-  function handleAddReward(e) {
+  async function handleAddReward(e) {
     e.preventDefault();
     const next = {};
     if (!newRewardNameEn.trim()) next.nameEn = t.errorRequired;
@@ -284,20 +403,22 @@ export default function AdminDashboard() {
     setRewardErrors(next);
     if (Object.keys(next).length > 0) return;
 
-    setRewardsList((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        name: { en: newRewardNameEn.trim(), ar: newRewardNameAr.trim() },
-        pointsCost: Number(newRewardCost),
-        stock: newRewardStock.trim() === '' ? null : Number(newRewardStock),
-        active: true,
-      },
-    ]);
+    setErrorMsg('');
+    const { error } = await supabase.from('rewards').insert({
+      name: { en: newRewardNameEn.trim(), ar: newRewardNameAr.trim() },
+      points_cost: Number(newRewardCost),
+      stock: newRewardStock.trim() === '' ? null : Number(newRewardStock),
+      active: true,
+    });
+    if (error) {
+      setErrorMsg(error.message);
+      return;
+    }
     setNewRewardNameEn('');
     setNewRewardNameAr('');
     setNewRewardCost('');
     setNewRewardStock('');
+    await loadData();
   }
 
   return (
@@ -315,7 +436,7 @@ export default function AdminDashboard() {
               {t.switchLanguage}
             </button>
             <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center text-sm font-medium text-slate-300">
-              {admin.fullName.charAt(0)}
+              {(profile?.full_name || 'A').charAt(0)}
             </div>
             <button
               type="button"
@@ -330,284 +451,283 @@ export default function AdminDashboard() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8 space-y-8">
-        <h1 className="text-2xl font-semibold">{t.welcomeAdmin(admin.fullName)}</h1>
+        <h1 className="text-2xl font-semibold">{t.welcomeAdmin(profile?.full_name || '')}</h1>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard icon={Users} label={t.statTotalInvestors} value={stats.totalInvestors} />
-          <StatCard icon={TrendingUp} label={t.statTotalInvested} value={formatCurrency(stats.totalInvested)} />
-          <StatCard icon={Clock} label={t.statPendingApprovals} value={accounts.length} />
-          <StatCard icon={Wallet} label={t.statPendingWithdrawals} value={withdrawals.length} />
-        </div>
+        {errorMsg && (
+          <div className="rounded-lg bg-rose-400/10 border border-rose-400/20 px-4 py-3 text-sm text-rose-400">{errorMsg}</div>
+        )}
 
-        <section>
-          <h2 className="text-lg font-semibold mb-4">{t.approvalsTitle}</h2>
-          {accounts.length === 0 ? (
-            <p className="text-slate-400 text-sm">{t.approvalsEmpty}</p>
-          ) : (
-            <div className="space-y-3">
-              {accounts.map((account) => (
-                <div key={account.id} className="rounded-xl bg-slate-900 border border-slate-800 p-4 space-y-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="font-semibold text-slate-50">{account.name}</div>
-                      <div className="text-xs text-slate-500 mt-0.5">
-                        {t.referredByLabel}: {account.referredBy} · {formatDate(account.requestedAt, locale)}
+        {loading ? (
+          <p className="text-slate-400 text-sm">{t.loading}</p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <StatCard icon={Users} label={t.statTotalInvestors} value={stats.totalInvestors} />
+              <StatCard icon={TrendingUp} label={t.statTotalInvested} value={formatCurrency(stats.totalInvested)} />
+              <StatCard icon={Clock} label={t.statPendingApprovals} value={stats.pendingApprovals} />
+              <StatCard icon={Wallet} label={t.statPendingWithdrawals} value={stats.pendingWithdrawals} />
+            </div>
+
+            <section>
+              <h2 className="text-lg font-semibold mb-4">{t.approvalsTitle}</h2>
+              {accounts.length === 0 ? (
+                <p className="text-slate-400 text-sm">{t.approvalsEmpty}</p>
+              ) : (
+                <div className="space-y-3">
+                  {accounts.map((account) => (
+                    <div key={account.id} className="rounded-xl bg-slate-900 border border-slate-800 p-4 space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="font-semibold text-slate-50">{account.name}</div>
+                          <div className="text-xs text-slate-500 mt-0.5">
+                            {t.referredByLabel}: {account.referredBy} · {formatDate(account.requestedAt, locale)}
+                          </div>
+                        </div>
+                        <code className="text-xs text-slate-500 font-mono">{account.referralCode}</code>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <select
+                          value={advisorSelections[account.id] || ''}
+                          onChange={(e) => setAdvisorSelections((prev) => ({ ...prev, [account.id]: e.target.value }))}
+                          className="rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                        >
+                          <option value="">{t.assignAdvisorPlaceholder}</option>
+                          {advisorsList.map((a) => (
+                            <option key={a.id} value={a.id}>
+                              {a.full_name}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          disabled={processingAccountId === account.id}
+                          onClick={() => handleApproveAccount(account)}
+                          className={approveBtnClass}
+                        >
+                          <Check className="w-4 h-4" />
+                          {t.approveButton}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={processingAccountId === account.id}
+                          onClick={() => handleRejectAccount(account)}
+                          className={rejectBtnClass}
+                        >
+                          <X className="w-4 h-4" />
+                          {t.rejectButton}
+                        </button>
                       </div>
                     </div>
-                    <code className="text-xs text-slate-500 font-mono">{account.referralCode}</code>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <select
-                      value={advisorSelections[account.id] || ''}
-                      onChange={(e) => setAdvisorSelections((prev) => ({ ...prev, [account.id]: e.target.value }))}
-                      className="rounded-lg bg-slate-950 border border-slate-700 px-3 py-2 text-sm text-slate-300 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400"
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h2 className="text-lg font-semibold mb-4">{t.withdrawalsTitle}</h2>
+              {withdrawals.length === 0 ? (
+                <p className="text-slate-400 text-sm">{t.withdrawalsEmpty}</p>
+              ) : (
+                <div className="space-y-3">
+                  {withdrawals.map((w) => (
+                    <div
+                      key={w.id}
+                      className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex flex-wrap items-center justify-between gap-3"
                     >
-                      <option value="">{t.assignAdvisorPlaceholder}</option>
-                      {advisorsList.map((a) => (
-                        <option key={a} value={a}>
-                          {a}
-                        </option>
-                      ))}
+                      <div>
+                        <div className="font-semibold text-slate-50">{w.investorName}</div>
+                        <div className="text-xs text-slate-500 mt-0.5">{formatDate(w.requestedAt, locale)}</div>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-amber-400 font-semibold">
+                          {w.points} {t.pointsUnit}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={processingWithdrawalId === w.id}
+                          onClick={() => handleWithdrawalDecision(w, true)}
+                          className={approveBtnClass}
+                        >
+                          <Check className="w-4 h-4" />
+                          {t.approveButton}
+                        </button>
+                        <button
+                          type="button"
+                          disabled={processingWithdrawalId === w.id}
+                          onClick={() => handleWithdrawalDecision(w, false)}
+                          className={rejectBtnClass}
+                        >
+                          <X className="w-4 h-4" />
+                          {t.rejectButton}
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="rounded-xl bg-slate-900 border border-slate-800 p-6">
+              <h2 className="text-lg font-semibold mb-4">{t.recordPaymentTitle}</h2>
+              <form onSubmit={handleRecordPayment} className="space-y-4">
+                <Field label={t.selectInvestor}>
+                  <select value={selectedInvestor} onChange={(e) => setSelectedInvestor(e.target.value)} className={inputClass}>
+                    <option value="">{t.selectInvestor}</option>
+                    {investorsList.map((inv) => (
+                      <option key={inv.id} value={inv.id}>
+                        {inv.full_name}
+                      </option>
+                    ))}
+                  </select>
+                  {paymentErrors.investor && <p className="mt-1.5 text-xs text-rose-400">{paymentErrors.investor}</p>}
+                </Field>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Field label={t.paymentType}>
+                    <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className={inputClass}>
+                      <option value="membership">{t.typeMembership}</option>
+                      <option value="investment">{t.typeInvestment}</option>
+                      <option value="other">{t.typeOther}</option>
                     </select>
-                    <button
-                      type="button"
-                      disabled={processingAccountId === account.id}
-                      onClick={() => handleAccountDecision(account.id)}
-                      className={approveBtnClass}
-                    >
-                      <Check className="w-4 h-4" />
-                      {t.approveButton}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={processingAccountId === account.id}
-                      onClick={() => handleAccountDecision(account.id)}
-                      className={rejectBtnClass}
-                    >
-                      <X className="w-4 h-4" />
-                      {t.rejectButton}
-                    </button>
-                  </div>
+                  </Field>
+                  <Field label={t.amountLabel}>
+                    <input type="number" min="1" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputClass} />
+                    {paymentErrors.amount && <p className="mt-1.5 text-xs text-rose-400">{paymentErrors.amount}</p>}
+                  </Field>
                 </div>
-              ))}
-            </div>
-          )}
-        </section>
 
-        <section>
-          <h2 className="text-lg font-semibold mb-4">{t.withdrawalsTitle}</h2>
-          {withdrawals.length === 0 ? (
-            <p className="text-slate-400 text-sm">{t.withdrawalsEmpty}</p>
-          ) : (
-            <div className="space-y-3">
-              {withdrawals.map((w) => (
-                <div
-                  key={w.id}
-                  className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex flex-wrap items-center justify-between gap-3"
+                <Field label={t.noteLabel}>
+                  <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={t.notePlaceholder} className={inputClass} />
+                </Field>
+
+                <button
+                  type="submit"
+                  disabled={submittingPayment}
+                  className="bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
                 >
-                  <div>
-                    <div className="font-semibold text-slate-50">{w.investorName}</div>
-                    <div className="text-xs text-slate-500 mt-0.5">{formatDate(w.requestedAt, locale)}</div>
+                  {t.recordButton}
+                </button>
+                {paymentSuccess && <p className="text-emerald-400 text-sm">{paymentSuccess}</p>}
+              </form>
+
+              <div className="border-t border-slate-800 mt-6 pt-5">
+                <div className="text-sm font-medium text-slate-300 mb-3">{t.recentPaymentsTitle}</div>
+                {payments.length === 0 ? (
+                  <p className="text-slate-400 text-sm">{t.noPayments}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {payments.map((p) => (
+                      <div
+                        key={p.id}
+                        className="flex flex-wrap items-center justify-between gap-2 text-sm py-2 border-b border-slate-800 last:border-0"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-slate-200 flex-shrink-0">{p.investorName}</span>
+                          <PaymentTypeBadge type={p.type} t={t} />
+                          {p.note && <span className="text-slate-500 text-xs truncate">{p.note}</span>}
+                        </div>
+                        <div className="flex items-center gap-3 flex-shrink-0">
+                          <span className="text-slate-400 text-xs">{formatDate(p.recordedAt, locale)}</span>
+                          <span className="font-medium text-slate-50">{formatCurrency(p.amount)}</span>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex items-center gap-3">
-                    <span className="text-amber-400 font-semibold">
-                      {w.points} {t.pointsUnit}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={processingWithdrawalId === w.id}
-                      onClick={() => handleWithdrawalDecision(w.id)}
-                      className={approveBtnClass}
-                    >
-                      <Check className="w-4 h-4" />
-                      {t.approveButton}
-                    </button>
-                    <button
-                      type="button"
-                      disabled={processingWithdrawalId === w.id}
-                      onClick={() => handleWithdrawalDecision(w.id)}
-                      className={rejectBtnClass}
-                    >
-                      <X className="w-4 h-4" />
-                      {t.rejectButton}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-xl bg-slate-900 border border-slate-800 p-6">
-          <h2 className="text-lg font-semibold mb-4">{t.recordPaymentTitle}</h2>
-          <form onSubmit={handleRecordPayment} className="space-y-4">
-            <Field label={t.selectInvestor}>
-              <select value={selectedInvestor} onChange={(e) => setSelectedInvestor(e.target.value)} className={inputClass}>
-                <option value="">{t.selectInvestor}</option>
-                {investorsList.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
-              </select>
-              {paymentErrors.investor && <p className="mt-1.5 text-xs text-rose-400">{paymentErrors.investor}</p>}
-            </Field>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label={t.paymentType}>
-                <select value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className={inputClass}>
-                  <option value="membership">{t.typeMembership}</option>
-                  <option value="investment">{t.typeInvestment}</option>
-                  <option value="other">{t.typeOther}</option>
-                </select>
-              </Field>
-              <Field label={t.amountLabel}>
-                <input
-                  type="number"
-                  min="1"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                  className={inputClass}
-                />
-                {paymentErrors.amount && <p className="mt-1.5 text-xs text-rose-400">{paymentErrors.amount}</p>}
-              </Field>
-            </div>
-
-            <Field label={t.noteLabel}>
-              <input
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder={t.notePlaceholder}
-                className={inputClass}
-              />
-            </Field>
-
-            <button
-              type="submit"
-              disabled={submittingPayment}
-              className="bg-amber-400 hover:bg-amber-300 disabled:opacity-60 text-slate-950 font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
-            >
-              {t.recordButton}
-            </button>
-            {paymentSuccess && <p className="text-emerald-400 text-sm">{paymentSuccess}</p>}
-          </form>
-
-          <div className="border-t border-slate-800 mt-6 pt-5">
-            <div className="text-sm font-medium text-slate-300 mb-3">{t.recentPaymentsTitle}</div>
-            {payments.length === 0 ? (
-              <p className="text-slate-400 text-sm">{t.noPayments}</p>
-            ) : (
-              <div className="space-y-2">
-                {payments.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex flex-wrap items-center justify-between gap-2 text-sm py-2 border-b border-slate-800 last:border-0"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-slate-200 flex-shrink-0">{p.investorName}</span>
-                      <PaymentTypeBadge type={p.type} t={t} />
-                      {p.note && <span className="text-slate-500 text-xs truncate">{p.note}</span>}
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <span className="text-slate-400 text-xs">{formatDate(p.recordedAt, locale)}</span>
-                      <span className="font-medium text-slate-50">{formatCurrency(p.amount)}</span>
-                    </div>
-                  </div>
-                ))}
+                )}
               </div>
-            )}
-          </div>
-        </section>
+            </section>
 
-        <section className="rounded-xl bg-slate-900 border border-slate-800 p-6">
-          <h2 className="text-lg font-semibold mb-4">{t.manageRewardsTitle}</h2>
+            <section className="rounded-xl bg-slate-900 border border-slate-800 p-6">
+              <h2 className="text-lg font-semibold mb-4">{t.manageRewardsTitle}</h2>
 
-          <div className="space-y-2 mb-6">
-            {rewardsList.map((r) => {
-              const stockText = r.stock === null ? t.unlimitedStock : r.stock > 0 ? t.inStock(r.stock) : t.outOfStock;
-              return (
-                <div
-                  key={r.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-950 border border-slate-800 px-4 py-3"
-                >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-amber-400/10 flex items-center justify-center flex-shrink-0">
-                      <Gift className="w-4 h-4 text-amber-400" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-medium text-slate-100 truncate">{translateReward(r.name, locale)}</div>
-                      <div className="text-xs text-slate-500">
-                        {t.pointsCostLabel}: {r.pointsCost} {t.pointsUnit} · {stockText}
+              <div className="space-y-2 mb-6">
+                {rewardsList.map((r) => {
+                  const stockText = r.stock === null ? t.unlimitedStock : r.stock > 0 ? t.inStock(r.stock) : t.outOfStock;
+                  return (
+                    <div
+                      key={r.id}
+                      className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-slate-950 border border-slate-800 px-4 py-3"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-8 h-8 rounded-lg bg-amber-400/10 flex items-center justify-center flex-shrink-0">
+                          <Gift className="w-4 h-4 text-amber-400" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-slate-100 truncate">{translateReward(r.name, locale)}</div>
+                          <div className="text-xs text-slate-500">
+                            {t.pointsCostLabel}: {r.points_cost} {t.pointsUnit} · {stockText}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <span
+                          className={`inline-flex text-xs font-medium px-2.5 py-1 rounded-full ${
+                            r.active ? 'bg-emerald-400/10 text-emerald-400' : 'bg-slate-800 text-slate-400'
+                          }`}
+                        >
+                          {r.active ? t.activeLabel : t.inactiveLabel}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleRewardActive(r)}
+                          className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
+                        >
+                          <Power className="w-3.5 h-3.5" />
+                          {r.active ? t.deactivateButton : t.activateButton}
+                        </button>
                       </div>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span
-                      className={`inline-flex text-xs font-medium px-2.5 py-1 rounded-full ${
-                        r.active ? 'bg-emerald-400/10 text-emerald-400' : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {r.active ? t.activeLabel : t.inactiveLabel}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleToggleRewardActive(r.id)}
-                      className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition-colors"
-                    >
-                      <Power className="w-3.5 h-3.5" />
-                      {r.active ? t.deactivateButton : t.activateButton}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                  );
+                })}
+              </div>
 
-          <form onSubmit={handleAddReward} className="space-y-4 border-t border-slate-800 pt-5">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label={t.rewardNameEn}>
-                <input value={newRewardNameEn} onChange={(e) => setNewRewardNameEn(e.target.value)} className={inputClass} />
-                {rewardErrors.nameEn && <p className="mt-1.5 text-xs text-rose-400">{rewardErrors.nameEn}</p>}
-              </Field>
-              <Field label={t.rewardNameAr}>
-                <input
-                  value={newRewardNameAr}
-                  onChange={(e) => setNewRewardNameAr(e.target.value)}
-                  className={inputClass}
-                  dir="rtl"
-                />
-                {rewardErrors.nameAr && <p className="mt-1.5 text-xs text-rose-400">{rewardErrors.nameAr}</p>}
-              </Field>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label={t.pointsCostLabel}>
-                <input
-                  type="number"
-                  min="1"
-                  value={newRewardCost}
-                  onChange={(e) => setNewRewardCost(e.target.value)}
-                  className={inputClass}
-                />
-                {rewardErrors.cost && <p className="mt-1.5 text-xs text-rose-400">{rewardErrors.cost}</p>}
-              </Field>
-              <Field label={t.stockLabel}>
-                <input
-                  type="number"
-                  min="0"
-                  value={newRewardStock}
-                  onChange={(e) => setNewRewardStock(e.target.value)}
-                  className={inputClass}
-                />
-              </Field>
-            </div>
-            <button
-              type="submit"
-              className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
-            >
-              {t.addRewardButton}
-            </button>
-          </form>
-        </section>
+              <form onSubmit={handleAddReward} className="space-y-4 border-t border-slate-800 pt-5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Field label={t.rewardNameEn}>
+                    <input value={newRewardNameEn} onChange={(e) => setNewRewardNameEn(e.target.value)} className={inputClass} />
+                    {rewardErrors.nameEn && <p className="mt-1.5 text-xs text-rose-400">{rewardErrors.nameEn}</p>}
+                  </Field>
+                  <Field label={t.rewardNameAr}>
+                    <input
+                      value={newRewardNameAr}
+                      onChange={(e) => setNewRewardNameAr(e.target.value)}
+                      className={inputClass}
+                      dir="rtl"
+                    />
+                    {rewardErrors.nameAr && <p className="mt-1.5 text-xs text-rose-400">{rewardErrors.nameAr}</p>}
+                  </Field>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <Field label={t.pointsCostLabel}>
+                    <input
+                      type="number"
+                      min="1"
+                      value={newRewardCost}
+                      onChange={(e) => setNewRewardCost(e.target.value)}
+                      className={inputClass}
+                    />
+                    {rewardErrors.cost && <p className="mt-1.5 text-xs text-rose-400">{rewardErrors.cost}</p>}
+                  </Field>
+                  <Field label={t.stockLabel}>
+                    <input
+                      type="number"
+                      min="0"
+                      value={newRewardStock}
+                      onChange={(e) => setNewRewardStock(e.target.value)}
+                      className={inputClass}
+                    />
+                  </Field>
+                </div>
+                <button
+                  type="submit"
+                  className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-semibold rounded-lg px-4 py-2.5 text-sm transition-colors"
+                >
+                  {t.addRewardButton}
+                </button>
+              </form>
+            </section>
+          </>
+        )}
       </main>
     </div>
   );
