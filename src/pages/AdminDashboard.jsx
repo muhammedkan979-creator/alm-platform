@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Globe, Check, X, Users, TrendingUp, Clock, Wallet, Gift, Power, LogOut } from 'lucide-react';
+import { Globe, Check, X, Users, TrendingUp, Clock, Wallet, Gift, Power, LogOut, ArrowUpCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 
@@ -8,7 +8,8 @@ import { supabase } from '../lib/supabase';
   All stats, lists, and actions read from and write to the actual
   database (profiles, investments, payments, point_withdrawal_requests,
   rewards) via the RPCs defined in the schema: approve_account,
-  reject_account, assign_advisor, record_payment, decide_withdrawal_request.
+  reject_account, assign_advisor, record_payment, decide_withdrawal_request,
+  promote_to_advisor.
 */
 
 const copy = {
@@ -58,6 +59,10 @@ const copy = {
     inactiveLabel: 'Inactive',
     deactivateButton: 'Deactivate',
     activateButton: 'Activate',
+    manageUsersTitle: 'Manage users',
+    manageUsersEmpty: 'No approved investors.',
+    promoteButton: 'Promote to advisor',
+    promoteSuccess: (name) => `${name} is now an advisor.`,
   },
   ar: {
     brand: 'منصّة ALM',
@@ -105,6 +110,10 @@ const copy = {
     inactiveLabel: 'موقوفة',
     deactivateButton: 'إيقاف',
     activateButton: 'تفعيل',
+    manageUsersTitle: 'إدارة المستخدمين',
+    manageUsersEmpty: 'ما في مستثمرين معتمدين.',
+    promoteButton: 'رقّي لمستشار',
+    promoteSuccess: (name) => `${name} صار مستشار.`,
   },
 };
 
@@ -160,6 +169,8 @@ const approveBtnClass =
   'inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-emerald-400/10 text-emerald-400 hover:bg-emerald-400/20 disabled:opacity-50 transition-colors';
 const rejectBtnClass =
   'inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-rose-400/10 text-rose-400 hover:bg-rose-400/20 disabled:opacity-50 transition-colors';
+const promoteBtnClass =
+  'inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-amber-400/10 text-amber-400 hover:bg-amber-400/20 disabled:opacity-50 transition-colors';
 
 export default function AdminDashboard() {
   const { signOut, profile } = useAuth();
@@ -179,6 +190,8 @@ export default function AdminDashboard() {
   const [advisorSelections, setAdvisorSelections] = useState({});
   const [processingAccountId, setProcessingAccountId] = useState(null);
   const [processingWithdrawalId, setProcessingWithdrawalId] = useState(null);
+  const [processingPromoteId, setProcessingPromoteId] = useState(null);
+  const [promoteSuccessMsg, setPromoteSuccessMsg] = useState('');
 
   const [selectedInvestor, setSelectedInvestor] = useState('');
   const [paymentType, setPaymentType] = useState('membership');
@@ -351,6 +364,22 @@ export default function AdminDashboard() {
     }
   }
 
+  async function handlePromoteToAdvisor(investor) {
+    setProcessingPromoteId(investor.id);
+    setErrorMsg('');
+    setPromoteSuccessMsg('');
+    try {
+      const { error } = await supabase.rpc('promote_to_advisor', { target_user_id: investor.id });
+      if (error) throw error;
+      setPromoteSuccessMsg(t.promoteSuccess(investor.full_name));
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setProcessingPromoteId(null);
+    }
+  }
+
   async function handleRecordPayment(e) {
     e.preventDefault();
     const next = {};
@@ -517,6 +546,34 @@ export default function AdminDashboard() {
                           {t.rejectButton}
                         </button>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h2 className="text-lg font-semibold mb-4">{t.manageUsersTitle}</h2>
+              {promoteSuccessMsg && <p className="text-emerald-400 text-sm mb-3">{promoteSuccessMsg}</p>}
+              {investorsList.length === 0 ? (
+                <p className="text-slate-400 text-sm">{t.manageUsersEmpty}</p>
+              ) : (
+                <div className="space-y-3">
+                  {investorsList.map((investor) => (
+                    <div
+                      key={investor.id}
+                      className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <div className="font-semibold text-slate-50">{investor.full_name}</div>
+                      <button
+                        type="button"
+                        disabled={processingPromoteId === investor.id}
+                        onClick={() => handlePromoteToAdvisor(investor)}
+                        className={promoteBtnClass}
+                      >
+                        <ArrowUpCircle className="w-4 h-4" />
+                        {t.promoteButton}
+                      </button>
                     </div>
                   ))}
                 </div>
