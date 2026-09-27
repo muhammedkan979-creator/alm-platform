@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Globe, Check, X, Users, TrendingUp, Clock, Wallet, Gift, Power, LogOut, ArrowUpCircle } from 'lucide-react';
+import { Globe, Check, X, Users, TrendingUp, Clock, Wallet, Gift, Power, LogOut, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabase';
 
@@ -9,7 +9,7 @@ import { supabase } from '../lib/supabase';
   database (profiles, investments, payments, point_withdrawal_requests,
   rewards) via the RPCs defined in the schema: approve_account,
   reject_account, assign_advisor, record_payment, decide_withdrawal_request,
-  promote_to_advisor.
+  set_advisor_role.
 */
 
 const copy = {
@@ -59,10 +59,12 @@ const copy = {
     inactiveLabel: 'Inactive',
     deactivateButton: 'Deactivate',
     activateButton: 'Activate',
-    manageUsersTitle: 'Manage users',
-    manageUsersEmpty: 'No approved investors.',
+    manageTeamTitle: 'Team & roles',
+    teamEmpty: 'No approved members yet.',
+    roleInvestor: 'Investor',
+    roleAdvisorLabel: 'Advisor',
     promoteButton: 'Promote to advisor',
-    promoteSuccess: (name) => `${name} is now an advisor.`,
+    demoteButton: 'Demote to investor',
   },
   ar: {
     brand: 'منصّة ALM',
@@ -110,10 +112,12 @@ const copy = {
     inactiveLabel: 'موقوفة',
     deactivateButton: 'إيقاف',
     activateButton: 'تفعيل',
-    manageUsersTitle: 'إدارة المستخدمين',
-    manageUsersEmpty: 'ما في مستثمرين معتمدين.',
+    manageTeamTitle: 'الفريق والأدوار',
+    teamEmpty: 'ما في أعضاء موافَق عليهم لسا.',
+    roleInvestor: 'مستثمر',
+    roleAdvisorLabel: 'مستشار',
     promoteButton: 'رقّي لمستشار',
-    promoteSuccess: (name) => `${name} صار مستشار.`,
+    demoteButton: 'رجّع لمستثمر',
   },
 };
 
@@ -162,6 +166,19 @@ function PaymentTypeBadge({ type, t }) {
   return <span className={`inline-flex text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${s.cls}`}>{s.text}</span>;
 }
 
+function RoleBadge({ role, t }) {
+  const isAdvisor = role === 'advisor';
+  return (
+    <span
+      className={`inline-flex text-xs font-medium px-2.5 py-1 rounded-full whitespace-nowrap ${
+        isAdvisor ? 'bg-amber-400/10 text-amber-400' : 'bg-slate-800 text-slate-400'
+      }`}
+    >
+      {isAdvisor ? t.roleAdvisorLabel : t.roleInvestor}
+    </span>
+  );
+}
+
 const inputClass =
   'w-full rounded-lg bg-slate-950 border border-slate-700 px-3 py-2.5 text-slate-50 placeholder:text-slate-500 focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-colors';
 
@@ -169,8 +186,6 @@ const approveBtnClass =
   'inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-emerald-400/10 text-emerald-400 hover:bg-emerald-400/20 disabled:opacity-50 transition-colors';
 const rejectBtnClass =
   'inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-rose-400/10 text-rose-400 hover:bg-rose-400/20 disabled:opacity-50 transition-colors';
-const promoteBtnClass =
-  'inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-amber-400/10 text-amber-400 hover:bg-amber-400/20 disabled:opacity-50 transition-colors';
 
 export default function AdminDashboard() {
   const { signOut, profile } = useAuth();
@@ -186,12 +201,12 @@ export default function AdminDashboard() {
   const [rewardsList, setRewardsList] = useState([]);
   const [advisorsList, setAdvisorsList] = useState([]);
   const [investorsList, setInvestorsList] = useState([]);
+  const [teamMembers, setTeamMembers] = useState([]);
 
   const [advisorSelections, setAdvisorSelections] = useState({});
   const [processingAccountId, setProcessingAccountId] = useState(null);
   const [processingWithdrawalId, setProcessingWithdrawalId] = useState(null);
-  const [processingPromoteId, setProcessingPromoteId] = useState(null);
-  const [promoteSuccessMsg, setPromoteSuccessMsg] = useState('');
+  const [processingRoleId, setProcessingRoleId] = useState(null);
 
   const [selectedInvestor, setSelectedInvestor] = useState('');
   const [paymentType, setPaymentType] = useState('membership');
@@ -214,17 +229,27 @@ export default function AdminDashboard() {
     setLoading(true);
     setErrorMsg('');
     try {
-      const [investorsCountRes, investmentsRes, pendingAccountsRes, pendingWithdrawalsRes, paymentsRes, rewardsRes, advisorsRes, approvedInvestorsRes] =
-        await Promise.all([
-          supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'investor'),
-          supabase.from('investments').select('amount'),
-          supabase.from('profiles').select('id, full_name, referral_code, referred_by, created_at').eq('status', 'pending'),
-          supabase.from('point_withdrawal_requests').select('id, profile_id, points, requested_at').eq('status', 'pending'),
-          supabase.from('payments').select('id, profile_id, type, amount, note, created_at').order('created_at', { ascending: false }).limit(20),
-          supabase.from('rewards').select('*').order('created_at', { ascending: false }),
-          supabase.from('profiles').select('id, full_name').eq('role', 'advisor').eq('status', 'approved'),
-          supabase.from('profiles').select('id, full_name').eq('role', 'investor').eq('status', 'approved'),
-        ]);
+      const [
+        investorsCountRes,
+        investmentsRes,
+        pendingAccountsRes,
+        pendingWithdrawalsRes,
+        paymentsRes,
+        rewardsRes,
+        advisorsRes,
+        approvedInvestorsRes,
+        teamMembersRes,
+      ] = await Promise.all([
+        supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'investor'),
+        supabase.from('investments').select('amount'),
+        supabase.from('profiles').select('id, full_name, referral_code, referred_by, created_at').eq('status', 'pending'),
+        supabase.from('point_withdrawal_requests').select('id, profile_id, points, requested_at').eq('status', 'pending'),
+        supabase.from('payments').select('id, profile_id, type, amount, note, created_at').order('created_at', { ascending: false }).limit(20),
+        supabase.from('rewards').select('*').order('created_at', { ascending: false }),
+        supabase.from('profiles').select('id, full_name').eq('role', 'advisor').eq('status', 'approved'),
+        supabase.from('profiles').select('id, full_name').eq('role', 'investor').eq('status', 'approved'),
+        supabase.from('profiles').select('id, full_name, role').eq('status', 'approved').in('role', ['investor', 'advisor']).order('role', { ascending: true }),
+      ]);
 
       const results = [
         investorsCountRes,
@@ -235,6 +260,7 @@ export default function AdminDashboard() {
         rewardsRes,
         advisorsRes,
         approvedInvestorsRes,
+        teamMembersRes,
       ];
       const firstError = results.find((r) => r.error);
       if (firstError) throw firstError.error;
@@ -302,6 +328,7 @@ export default function AdminDashboard() {
       setRewardsList(rewardsRes.data || []);
       setAdvisorsList(advisorsRes.data || []);
       setInvestorsList(approvedInvestorsRes.data || []);
+      setTeamMembers(teamMembersRes.data || []);
     } catch (err) {
       setErrorMsg(err.message || String(err));
     } finally {
@@ -364,19 +391,21 @@ export default function AdminDashboard() {
     }
   }
 
-  async function handlePromoteToAdvisor(investor) {
-    setProcessingPromoteId(investor.id);
+  async function handleRoleToggle(member) {
+    setProcessingRoleId(member.id);
     setErrorMsg('');
-    setPromoteSuccessMsg('');
     try {
-      const { error } = await supabase.rpc('promote_to_advisor', { target_user_id: investor.id });
+      const makeAdvisor = member.role !== 'advisor';
+      const { error } = await supabase.rpc('set_advisor_role', {
+        p_profile_id: member.id,
+        p_make_advisor: makeAdvisor,
+      });
       if (error) throw error;
-      setPromoteSuccessMsg(t.promoteSuccess(investor.full_name));
       await loadData();
     } catch (err) {
       setErrorMsg(err.message || String(err));
     } finally {
-      setProcessingPromoteId(null);
+      setProcessingRoleId(null);
     }
   }
 
@@ -436,7 +465,7 @@ export default function AdminDashboard() {
     const { error } = await supabase.from('rewards').insert({
       name: { en: newRewardNameEn.trim(), ar: newRewardNameAr.trim() },
       points_cost: Number(newRewardCost),
-      stock: newRewardStock.trim() === '' ? null : Number(newRewardStock),
+      stock_quantity: newRewardStock.trim() === '' ? null : Number(newRewardStock),
       active: true,
     });
     if (error) {
@@ -449,7 +478,6 @@ export default function AdminDashboard() {
     setNewRewardStock('');
     await loadData();
   }
-
   return (
     <div dir={dir} lang={locale} className="min-h-screen bg-slate-950 font-sans text-slate-50">
       <header className="border-b border-slate-800 bg-slate-900">
@@ -553,34 +581,6 @@ export default function AdminDashboard() {
             </section>
 
             <section>
-              <h2 className="text-lg font-semibold mb-4">{t.manageUsersTitle}</h2>
-              {promoteSuccessMsg && <p className="text-emerald-400 text-sm mb-3">{promoteSuccessMsg}</p>}
-              {investorsList.length === 0 ? (
-                <p className="text-slate-400 text-sm">{t.manageUsersEmpty}</p>
-              ) : (
-                <div className="space-y-3">
-                  {investorsList.map((investor) => (
-                    <div
-                      key={investor.id}
-                      className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex flex-wrap items-center justify-between gap-3"
-                    >
-                      <div className="font-semibold text-slate-50">{investor.full_name}</div>
-                      <button
-                        type="button"
-                        disabled={processingPromoteId === investor.id}
-                        onClick={() => handlePromoteToAdvisor(investor)}
-                        className={promoteBtnClass}
-                      >
-                        <ArrowUpCircle className="w-4 h-4" />
-                        {t.promoteButton}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section>
               <h2 className="text-lg font-semibold mb-4">{t.withdrawalsTitle}</h2>
               {withdrawals.length === 0 ? (
                 <p className="text-slate-400 text-sm">{t.withdrawalsEmpty}</p>
@@ -618,6 +618,40 @@ export default function AdminDashboard() {
                           {t.rejectButton}
                         </button>
                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section>
+              <h2 className="text-lg font-semibold mb-4">{t.manageTeamTitle}</h2>
+              {teamMembers.length === 0 ? (
+                <p className="text-slate-400 text-sm">{t.teamEmpty}</p>
+              ) : (
+                <div className="space-y-2">
+                  {teamMembers.map((member) => (
+                    <div
+                      key={member.id}
+                      className="rounded-xl bg-slate-900 border border-slate-800 p-4 flex flex-wrap items-center justify-between gap-3"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="font-medium text-slate-100">{member.full_name}</span>
+                        <RoleBadge role={member.role} t={t} />
+                      </div>
+                      <button
+                        type="button"
+                        disabled={processingRoleId === member.id}
+                        onClick={() => handleRoleToggle(member)}
+                        className={member.role === 'advisor' ? rejectBtnClass : approveBtnClass}
+                      >
+                        {member.role === 'advisor' ? (
+                          <ArrowDownCircle className="w-4 h-4" />
+                        ) : (
+                          <ArrowUpCircle className="w-4 h-4" />
+                        )}
+                        {member.role === 'advisor' ? t.demoteButton : t.promoteButton}
+                      </button>
                     </div>
                   ))}
                 </div>
@@ -699,7 +733,12 @@ export default function AdminDashboard() {
 
               <div className="space-y-2 mb-6">
                 {rewardsList.map((r) => {
-                  const stockText = r.stock === null ? t.unlimitedStock : r.stock > 0 ? t.inStock(r.stock) : t.outOfStock;
+                  const stockText =
+                    r.stock_quantity === null
+                      ? t.unlimitedStock
+                      : r.stock_quantity > 0
+                      ? t.inStock(r.stock_quantity)
+                      : t.outOfStock;
                   return (
                     <div
                       key={r.id}
