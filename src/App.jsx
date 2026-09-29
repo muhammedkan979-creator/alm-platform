@@ -4,7 +4,16 @@ import ProtectedRoute from './components/ProtectedRoute';
 import AuthPage from './pages/AuthPage';
 import InvestorDashboard from './pages/InvestorDashboard';
 import AdvisorDashboard from './pages/AdvisorDashboard';
-import AdminDashboard from './pages/AdminDashboard';
+import AdminLayout from './pages/AdminLayout';
+import AdminOverview from './pages/AdminOverview';
+import AdminApprovals from './pages/AdminApprovals';
+import AdminWithdrawals from './pages/AdminWithdrawals';
+import AdminTeam from './pages/AdminTeam';
+import AdminRecordPayment from './pages/AdminRecordPayment';
+import AdminPaymentsLog from './pages/AdminPaymentsLog';
+import AdminRewards from './pages/AdminRewards';
+import AdminInvestors from './pages/AdminInvestors';
+import AdminInvestorDetail from './pages/AdminInvestorDetail';
 import RewardsCatalog from './pages/RewardsCatalog';
 
 function RoleHome() {
@@ -47,10 +56,20 @@ export default function App() {
             path="/admin"
             element={
               <ProtectedRoute allowedRoles={['admin']}>
-                <AdminDashboard />
+                <AdminLayout />
               </ProtectedRoute>
             }
-          />
+          >
+            <Route index element={<AdminOverview />} />
+            <Route path="approvals" element={<AdminApprovals />} />
+            <Route path="withdrawals" element={<AdminWithdrawals />} />
+            <Route path="team" element={<AdminTeam />} />
+            <Route path="record-payment" element={<AdminRecordPayment />} />
+            <Route path="payments" element={<AdminPaymentsLog />} />
+            <Route path="rewards" element={<AdminRewards />} />
+            <Route path="investors" element={<AdminInvestors />} />
+            <Route path="investors/:id" element={<AdminInvestorDetail />} />
+          </Route>
           <Route
             path="/rewards"
             element={
@@ -64,4 +83,4 @@ export default function App() {
       </BrowserRouter>
     </AuthProvider>
   );
-      }
+}
