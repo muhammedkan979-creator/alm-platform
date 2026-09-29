@@ -1,15 +1,14 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { Globe, Gift, Check, Coins, Loader2, LogOut, ArrowLeft } from 'lucide-react';
+import { Globe, Gift, Coins, Loader2, LogOut, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { supabase } from '../lib/supabase';
 
 /*
-  Prototype rewards catalog for the ALM Platform.
-  Stock and active status here are mocked to match what the admin
-  dashboard's "Manage rewards" section sets — inactive rewards are
-  filtered out, and out-of-stock ones are shown but disabled. To make
-  redemption persist for real, swap handleRedeem() for a call to the
-  redeem_reward() RPC, which re-checks points, stock, and active status
+  Rewards catalog for the ALM Platform — wired to real Supabase data.
+  Reads active rewards from the rewards table and the investor's
+  available points via the available_points RPC. Redemption calls
+  redeem_reward(), which re-checks points, stock, and active status
   server-side and decrements stock atomically.
 */
 
@@ -19,87 +18,94 @@ const copy = {
     switchLanguage: 'العربية',
     pageTitle: 'Rewards catalog',
     pageSubtitle: 'Redeem your points for rewards.',
+    loading: 'Loading…',
     pointsAvailable: (n) => `${n} points available`,
     redeemButton: 'Redeem',
-    redeemedButton: 'Redeemed',
     notEnoughPoints: 'Not enough points',
     pointsCost: (n) => `${n} pts`,
     redeemedToast: (name) => `Redeemed: ${name}`,
     unlimitedStock: 'Unlimited',
     inStock: (n) => `${n} left`,
     outOfStock: 'Out of stock',
+    catalogEmpty: 'No rewards available right now.',
   },
   ar: {
     brand: 'منصّة ALM',
     switchLanguage: 'English',
     pageTitle: 'كتالوج الجوائز',
     pageSubtitle: 'استبدل نقاطك بجوائز.',
+    loading: 'عم يحمّل…',
     pointsAvailable: (n) => `${n} نقطة متوفرة`,
     redeemButton: 'استبدال',
-    redeemedButton: 'تم الاستبدال',
     notEnoughPoints: 'نقاط غير كافية',
     pointsCost: (n) => `${n} نقطة`,
     redeemedToast: (name) => `تم استبدال: ${name}`,
     unlimitedStock: 'غير محدود',
     inStock: (n) => `${n} متبقي`,
     outOfStock: 'خلصت',
+    catalogEmpty: 'ما في جوائز متوفرة هلق.',
   },
 };
 
-const investorPoints = 275;
-
-const initialRewardsCatalog = [
-  { id: 1, name: { en: 'Amazon gift card — $50', ar: 'بطاقة أمازون هدية — 50$' }, pointsCost: 200, stock: 12, active: true },
-  { id: 2, name: { en: 'Free financial consultation', ar: 'استشارة مالية مجانية' }, pointsCost: 100, stock: null, active: true },
-  { id: 3, name: { en: 'Premium membership upgrade', ar: 'ترقية عضوية بريميوم' }, pointsCost: 500, stock: 0, active: true },
-  { id: 4, name: { en: 'Branded gift set', ar: 'طقم هدايا مميز' }, pointsCost: 150, stock: 5, active: false },
-  {
-    id: 5,
-    name: { en: 'Priority access to new projects', ar: 'أولوية دخول لمشاريع جديدة' },
-    pointsCost: 350,
-    stock: null,
-    active: true,
-  },
-  {
-    id: 6,
-    name: { en: 'Referral bonus boost — 2x for 30 days', ar: 'مضاعفة نقاط الإحالة لمدة 30 يوم' },
-    pointsCost: 400,
-    stock: 3,
-    active: true,
-  },
-];
-
 function translate(value, locale) {
-  return value[locale] || value.en;
+  return (value && value[locale]) || (value && value.en) || '';
 }
 
 export default function RewardsCatalog() {
-  const { signOut } = useAuth();
+  const { signOut, profile } = useAuth();
   const [locale, setLocale] = useState('en');
-  const [rewardsCatalog, setRewardsCatalog] = useState(initialRewardsCatalog);
-  const [redeemed, setRedeemed] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [errorMsg, setErrorMsg] = useState('');
+
+  const [rewardsCatalog, setRewardsCatalog] = useState([]);
+  const [available, setAvailable] = useState(0);
   const [processingId, setProcessingId] = useState(null);
   const [toast, setToast] = useState('');
-  const [spent, setSpent] = useState(0);
 
   const t = copy[locale];
   const dir = locale === 'ar' ? 'rtl' : 'ltr';
-  const available = investorPoints - spent;
 
-  function handleRedeem(reward) {
-    const outOfStock = reward.stock !== null && reward.stock <= 0;
-    if (redeemed.has(reward.id) || reward.pointsCost > available || outOfStock) return;
+  async function loadData() {
+    if (!profile?.id) return;
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const [rewardsRes, availableRes] = await Promise.all([
+        supabase.from('rewards').select('*').eq('active', true).order('points_cost', { ascending: true }),
+        supabase.rpc('available_points', { p_profile_id: profile.id }),
+      ]);
+      if (rewardsRes.error) throw rewardsRes.error;
+      if (availableRes.error) throw availableRes.error;
+      setRewardsCatalog(rewardsRes.data || []);
+      setAvailable(availableRes.data || 0);
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.id]);
+
+  async function handleRedeem(reward) {
+    const outOfStock = reward.stock_quantity !== null && reward.stock_quantity <= 0;
+    if (reward.points_cost > available || outOfStock) return;
     setProcessingId(reward.id);
-    setTimeout(() => {
-      setRedeemed((prev) => new Set(prev).add(reward.id));
-      setSpent((prev) => prev + reward.pointsCost);
-      setRewardsCatalog((prev) =>
-        prev.map((r) => (r.id === reward.id && r.stock !== null ? { ...r, stock: r.stock - 1 } : r))
-      );
-      setProcessingId(null);
+    setErrorMsg('');
+    try {
+      const { error } = await supabase.rpc('redeem_reward', { p_reward_id: reward.id });
+      if (error) throw error;
       setToast(t.redeemedToast(translate(reward.name, locale)));
       setTimeout(() => setToast(''), 2200);
-    }, 700);
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setProcessingId(null);
+    }
   }
 
   return (
@@ -149,16 +155,27 @@ export default function RewardsCatalog() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {rewardsCatalog
-            .filter((reward) => reward.active)
-            .map((reward) => {
-              const isRedeemed = redeemed.has(reward.id);
-              const outOfStock = reward.stock !== null && reward.stock <= 0;
-              const insufficient = reward.pointsCost > available && !isRedeemed;
-              const disabled = isRedeemed || insufficient || outOfStock;
+        {errorMsg && (
+          <div className="rounded-lg bg-rose-400/10 border border-rose-400/20 px-4 py-3 text-sm text-rose-400">{errorMsg}</div>
+        )}
+
+        {loading ? (
+          <p className="text-slate-400 text-sm">{t.loading}</p>
+        ) : rewardsCatalog.length === 0 ? (
+          <p className="text-slate-400 text-sm">{t.catalogEmpty}</p>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {rewardsCatalog.map((reward) => {
+              const outOfStock = reward.stock_quantity !== null && reward.stock_quantity <= 0;
+              const insufficient = reward.points_cost > available;
+              const disabled = insufficient || outOfStock;
               const isProcessing = processingId === reward.id;
-              const stockText = reward.stock === null ? t.unlimitedStock : reward.stock > 0 ? t.inStock(reward.stock) : t.outOfStock;
+              const stockText =
+                reward.stock_quantity === null
+                  ? t.unlimitedStock
+                  : reward.stock_quantity > 0
+                  ? t.inStock(reward.stock_quantity)
+                  : t.outOfStock;
               return (
                 <div key={reward.id} className="rounded-xl bg-slate-900 border border-slate-800 p-5 flex flex-col">
                   <div className="flex-1">
@@ -167,7 +184,7 @@ export default function RewardsCatalog() {
                     </div>
                     <div className="font-semibold text-slate-50 mb-2">{translate(reward.name, locale)}</div>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-amber-400 text-sm font-medium">{t.pointsCost(reward.pointsCost)}</span>
+                      <span className="text-amber-400 text-sm font-medium">{t.pointsCost(reward.points_cost)}</span>
                       <span className="text-slate-500 text-xs">{stockText}</span>
                     </div>
                   </div>
@@ -176,21 +193,19 @@ export default function RewardsCatalog() {
                     disabled={disabled || isProcessing}
                     onClick={() => handleRedeem(reward)}
                     className={`mt-4 inline-flex items-center justify-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium transition-colors ${
-                      isRedeemed
-                        ? 'bg-emerald-400/10 text-emerald-400 cursor-default'
-                        : disabled
+                      disabled
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
                         : 'bg-amber-400 hover:bg-amber-300 text-slate-950'
                     }`}
                   >
                     {isProcessing && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {isRedeemed && <Check className="w-4 h-4" />}
-                    {isRedeemed ? t.redeemedButton : outOfStock ? t.outOfStock : insufficient ? t.notEnoughPoints : t.redeemButton}
+                    {outOfStock ? t.outOfStock : insufficient ? t.notEnoughPoints : t.redeemButton}
                   </button>
                 </div>
               );
             })}
-        </div>
+          </div>
+        )}
       </main>
 
       {toast && (
@@ -200,4 +215,4 @@ export default function RewardsCatalog() {
       )}
     </div>
   );
-    }
+}
