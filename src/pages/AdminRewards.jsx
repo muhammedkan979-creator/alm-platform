@@ -99,7 +99,6 @@ export default function AdminRewards() {
   }
 
   async function handleDelete(reward) {
-    if (!window.confirm(t.deleteConfirm)) return;
     setDeletingId(reward.id);
     setErrorMsg('');
     const { error } = await supabase.from('rewards').delete().eq('id', reward.id);
