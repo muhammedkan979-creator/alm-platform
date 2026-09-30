@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const copy = {
@@ -11,6 +11,8 @@ const copy = {
     statusApproved: 'Approved',
     statusPending: 'Pending',
     statusRejected: 'Rejected',
+    deleteButton: 'Delete',
+    deleteConfirm: (name) => `Permanently delete ${name}'s account? This cannot be undone — they will lose all access.`,
   },
   ar: {
     title: 'المستثمرين',
@@ -19,6 +21,8 @@ const copy = {
     statusApproved: 'موافَق عليه',
     statusPending: 'بانتظار الموافقة',
     statusRejected: 'مرفوض',
+    deleteButton: 'حذف',
+    deleteConfirm: (name) => `تحذف حساب ${name} نهائياً؟ ما فيك ترجعو — رح يخسر كل صلاحية دخول.`,
   },
 };
 
@@ -39,27 +43,44 @@ export default function AdminInvestors() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
   const [investors, setInvestors] = useState([]);
+  const [deletingId, setDeletingId] = useState(null);
+
+  async function loadData() {
+    setLoading(true);
+    setErrorMsg('');
+    try {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('id, full_name, status')
+        .eq('role', 'investor')
+        .order('full_name', { ascending: true });
+      if (error) throw error;
+      setInvestors(data || []);
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setErrorMsg('');
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('id, full_name, status')
-          .eq('role', 'investor')
-          .order('full_name', { ascending: true });
-        if (error) throw error;
-        setInvestors(data || []);
-      } catch (err) {
-        setErrorMsg(err.message || String(err));
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
+    loadData();
   }, []);
+
+  async function handleDelete(inv) {
+    if (!window.confirm(t.deleteConfirm(inv.full_name))) return;
+    setDeletingId(inv.id);
+    setErrorMsg('');
+    try {
+      const { error } = await supabase.rpc('delete_investor_account', { p_profile_id: inv.id });
+      if (error) throw error;
+      await loadData();
+    } catch (err) {
+      setErrorMsg(err.message || String(err));
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -76,17 +97,25 @@ export default function AdminInvestors() {
       ) : (
         <div className="space-y-2">
           {investors.map((inv) => (
-            <Link
+            <div
               key={inv.id}
-              to={`/admin/investors/${inv.id}`}
-              className="flex items-center justify-between gap-3 rounded-xl bg-slate-900 border border-slate-800 p-4 hover:bg-slate-800/60 transition-colors"
+              className="flex items-center justify-between gap-3 rounded-xl bg-slate-900 border border-slate-800 p-4"
             >
-              <span className="font-medium text-slate-100">{inv.full_name}</span>
-              <div className="flex items-center gap-2">
+              <Link to={`/admin/investors/${inv.id}`} className="flex items-center gap-3 flex-1 min-w-0 hover:opacity-80 transition-opacity">
+                <span className="font-medium text-slate-100 truncate">{inv.full_name}</span>
                 <StatusBadge status={inv.status} t={t} />
-                <ChevronRight className="w-4 h-4 text-slate-500" />
-              </div>
-            </Link>
+                <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />
+              </Link>
+              <button
+                type="button"
+                disabled={deletingId === inv.id}
+                onClick={() => handleDelete(inv)}
+                className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-rose-400/10 text-rose-400 hover:bg-rose-400/20 disabled:opacity-50 transition-colors flex-shrink-0"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                {t.deleteButton}
+              </button>
+            </div>
           ))}
         </div>
       )}
